@@ -1,75 +1,107 @@
-# gridcast: Germany grid carbon-intensity forecast, scored live
+# Germany grid carbon-intensity forecast (scored live)
 
-A 48-hour forecast of Germany's electricity carbon intensity with an 80% prediction
-interval, a "best time to charge" window, a high-carbon alert, and a **public
-scoreboard that grades every forecast against what actually happened**.
+**Live dashboard:** https://usmana74.github.io/grid-carbon-forecast/
 
-The point is the track record, not a one-off notebook score: forecasts are issued
-daily by CI, committed to git, and never rewritten, so accuracy is auditable.
+A 48-hour hourly forecast of Germany's electricity carbon intensity with an 80% prediction
+interval, a "cleanest 3 hours" window, and a high-carbon alert. A scheduled job issues a new
+forecast every day, freezes it in git, and later grades it against what actually happened.
+Live since 2026-10-24.
+
+Carbon-intensity trackers already exist. The point of this project is evaluation rigour and an
+auditable track record, not a new idea.
+
+## Backtest results (rolling origin, as of 2026-10-24)
+
+4 folds of 14 days, trained only on data before each fold, 9,408 forecast-hours in total.
+
+| Method | MAE (g/kWh) | RMSE | Bias |
+|---|---|---|---|
+| This model (median) | 37.1 | 47.4 | -15.5 |
+| Same hour yesterday | 97.2 | 125.0 | -5.0 |
+| Same hour last week | 119.1 | 150.2 | -4.9 |
+| Persistence (last value) | 126.8 | 161.8 | -5.7 |
+
+Skill vs the best baseline: +61.8%. Treat this as an UPPER BOUND (see Limitations).
+
+By horizon (MAE): 1-6 h 36.3 | 7-12 h 36.3 | 13-24 h 37.1 | 25-48 h 37.5
+(baseline "same hour yesterday": 84.2 | 84.1 | 86.1 | 109.2).
+
+Per fold MAE: 38.0, 46.5, 32.8, 31.0. The second fold is the weakest.
+
+80% interval coverage: 74.5% after conformal calibration (67.6% before). Closer to the 80%
+target, but still under-covers.
+
+### Why the +61.8% is an upper bound
+
+The backtest feeds the model the OBSERVED weather for the hour being predicted. In real use only a
+weather FORECAST is available, which has errors that grow with lead time. Two signs of this:
+error is almost flat across horizons (a real forecaster gets worse further out), and a
+preliminary ablation on an earlier data window (before calibration) gave:
+
+| Weather input | MAE | Skill vs best baseline |
+|---|---|---|
+| Observed (perfect) weather | 36.6 | +60.4% |
+| Noisy weather (independent noise) | 43.6 | +52.9% |
+| No weather features | 72.6 | +21.6% |
+
+The noisy case adds independent random noise, whereas real forecast errors are correlated, so it
+is optimistic. The honest range is roughly +22% (no weather) to +60% (perfect weather). The live
+scoreboard is the number to trust.
+
+## Live scoreboard
+
+Every forecast is saved to `docs/data/forecasts/` and never rewritten (the code refuses to
+overwrite an existing forecast, and git history shows it). Once at least 12 of a forecast's hours
+have occurred, it is scored against the realized values. The dashboard shows the running MAE, the
+skill versus the same-hour-yesterday baseline, and interval coverage.
 
 ## How it works
 
-```
-Energy-Charts (generation mix) ─┐                         ┌─ forecasts/*.json (frozen)
-                                ├─ dataset ─ features ─ model ─┼─ scoreboard.json (live accuracy)
-Open-Meteo (wind/sun/temp) ─────┘                         └─ backtest.json (rolling origin)
-                                                                 │
-                                                       docs/index.html (GitHub Pages)
-```
+- Data: generation mix from Energy-Charts (Fraunhofer ISE); wind, sun, temperature and cloud from
+  Open-Meteo, averaged over 7 points in Germany. Please check each provider's terms and
+  attribution requirements before reusing the data.
+- Target: production-based carbon intensity = generation mix x fixed lifecycle emission factors
+  (g CO2eq/kWh): lignite 1050, hard coal 820, oil 650, gas 490, biomass 230, waste 400,
+  solar 48, hydro 24, wind 11, other 500. Factors are assumptions and live in `gridcast/carbon.py`.
+- Model: gradient-boosted quantile regression (p10 / p50 / p90), one global model over horizons
+  1-48 h, plus split-conformal calibration of the interval per horizon bucket.
+- Evaluation: rolling-origin backtest with an assertion that no training target falls after the
+  fold start, and baselines that must be beaten.
+- Automation: GitHub Actions runs daily, caches the dataset, commits forecasts and the
+  scoreboard, and re-runs the backtest on Sundays.
 
-- **Target:** hourly production-based carbon intensity (generation mix x lifecycle emission factors).
-- **Model:** global gradient-boosted quantile regressors (p10/p50/p90) over horizons 1-48 h.
-- **Baselines it must beat:** persistence, same hour yesterday, same hour last week.
-- **Evaluation:** rolling-origin backtest (train on the past only, a leak guard asserts it) plus the live scoreboard.
-- **Outputs:** median + 80% interval, cleanest 3-hour window, high-carbon alert (>= 6 h above the 90th percentile of the last year).
+## Limitations
 
-## Quickstart
-
-```bash
-pip install -r requirements.txt
-python -m pytest -q                  # 11 tests, offline
-python -m gridcast demo              # offline end-to-end run on SYNTHETIC data
-python -m http.server -d docs 8000   # open http://localhost:8000/?demo
-```
-
-### Real data (do this once, in order)
-
-```bash
-python -m gridcast check             # 1. verifies both live APIs parse as expected
-python -m gridcast ingest            # 2. backfills ~2 years (a few minutes)
-python -m gridcast backtest          # 3. honest rolling-origin numbers
-python -m gridcast daily             # 4. issues today's forecast + updates the scoreboard
-python -m http.server -d docs 8000   #    open http://localhost:8000/
-```
-
-### Deploy
-
-1. Push to GitHub. In **Settings > Pages**, serve from branch `main`, folder `/docs`.
-2. The workflow in `.github/workflows/daily.yml` runs daily, commits `docs/data/`, and runs the backtest on Sundays.
-
-## Status and limitations (read before quoting any number)
-
-- **Synthetic demo numbers are meaningless.** The demo generator makes carbon a near-deterministic function of the weather inputs, so skill looks absurdly high. It exists to test the plumbing only.
-- **Carbon intensity is an approximation.** Production-based, fixed emission factors (`gridcast/carbon.py`), no cross-border flows. It will not match Electricity Maps or official numbers.
-- **Weather mismatch:** training uses observed/reanalysis weather; live forecasts use forecast weather. Backtest skill is therefore likely optimistic. The live scoreboard is the number to trust.
-- **Interval calibration:** the 80% interval can under-cover. Coverage is reported honestly; conformal calibration is the planned fix.
-- **API shapes** were written from public docs and covered by offline parser tests; `python -m gridcast check` confirms them against the live services.
+- Observed vs forecast weather mismatch (above): the backtest is optimistic.
+- The carbon number is an approximation: fixed emission factors, imports and exports are ignored,
+  pumped-storage generation is treated like hydro, and the factors for "Others" and "Waste" are
+  rough guesses. It will not match Electricity Maps or official figures.
+- It estimates AVERAGE emissions, not the marginal emissions caused by extra demand.
+- Intervals still under-cover (74.5% vs 80%).
+- The alert is a "high-carbon period" (median above the 90th percentile of the last year for
+  6+ hours), not a validated Dunkelflaute detector.
+- One person's charging barely moves the grid. No emissions-reduction claim is made.
 - Not an official or safety-critical service.
+
+## Reproduce (Ubuntu)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest -q
+python -m gridcast check
+python -m gridcast ingest
+python -m gridcast backtest
+python -m http.server -d docs 8000
+```
 
 ## Roadmap
 
-- [ ] Conformal calibration of the intervals
-- [ ] Train on archived *forecast* weather instead of reanalysis
+- [ ] Re-run the weather ablation with the calibrated model and publish it
+- [ ] Train on archived weather forecasts instead of observed weather
+- [ ] Improve interval calibration toward 80%
 - [ ] Compare against published day-ahead renewable forecasts
-- [ ] `dataaudit` integration: automated gap/revision/DST checks on the feeds
-- [ ] KBA vehicle-registration angle (EV adoption vs. grid cleanliness)
-
-## Layout
-
-```
-gridcast/   sources.py carbon.py features.py model.py backtest.py publish.py synthetic.py cli.py
-tests/      offline tests incl. leakage and frozen-forecast guarantees
-docs/       index.html dashboard (Pages) + data/ (forecasts, scoreboard, backtest)
-```
+- [ ] Automated gap, revision and daylight-saving checks on the feeds (dataaudit)
 
 MIT licensed.
