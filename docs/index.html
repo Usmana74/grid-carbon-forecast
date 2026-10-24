@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Germany grid carbon forecast – scored live</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#14181f; --muted:#5b6574; --line:#e2e6ec;
+    --accent:#0b7a5a; --band:rgba(11,122,90,.18); --base:#8b94a3; --warn:#b4231b; --warnbg:#fdecea; --good:#e5f5ee;
+  }
+  :root:not([data-theme="light"]){}
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0f1318; --card:#171c23; --ink:#e8ecf2; --muted:#9aa5b5; --line:#2a313c;
+      --accent:#3ccf9f; --band:rgba(60,207,159,.2); --base:#7d8797; --warn:#ff8a80; --warnbg:#3a1d1b; --good:#12302a;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  main{max-width:980px;margin:0 auto;padding:20px 16px 48px}
+  h1{font-size:1.5rem;margin:0 0 2px} h2{font-size:1.05rem;margin:28px 0 10px}
+  .sub{color:var(--muted);margin:0 0 16px}
+  .banner{background:var(--warnbg);color:var(--warn);border:1px solid var(--warn);border-radius:10px;padding:10px 14px;margin:0 0 16px;font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card .k{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.04em}
+  .card .v{font-size:1.5rem;font-weight:700;margin-top:2px} .card .s{color:var(--muted);font-size:.85rem}
+  .card.alert{border-color:var(--warn);background:var(--warnbg)} .card.alert .v{color:var(--warn)}
+  .card.good{background:var(--good)}
+  .chartbox{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+  canvas{width:100%;height:320px;display:block}
+  #tip{min-height:1.4em;color:var(--muted);font-size:.9rem;padding:4px 4px 0}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:.85rem;padding:4px}
+  .legend i{display:inline-block;width:18px;height:0;border-top:3px solid var(--accent);vertical-align:middle;margin-right:6px}
+  .legend i.b{border-top:2px dashed var(--base)} .legend i.band{height:10px;border:0;background:var(--band)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{padding:8px 12px;text-align:right;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  th:first-child,td:first-child{text-align:left} th{color:var(--muted);font-size:.8rem;font-weight:600}
+  tr:last-child td{border-bottom:0}
+  .scroll{overflow-x:auto}
+  .note{color:var(--muted);font-size:.85rem}
+  .pos{color:var(--accent);font-weight:700} .neg{color:var(--warn);font-weight:700}
+  footer{margin-top:32px;color:var(--muted);font-size:.85rem}
+  footer li{margin:4px 0}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Germany grid carbon forecast</h1>
+  <p class="sub">48-hour forecast of carbon intensity with an 80% interval — and a public scoreboard that grades every forecast against what actually happened.</p>
+  <div id="banner" class="banner" hidden></div>
+
+  <div class="grid" id="cards"></div>
+
+  <div class="chartbox">
+    <canvas id="chart" aria-label="48 hour carbon intensity forecast"></canvas>
+    <div id="tip">Hover the chart for details.</div>
+    <div class="legend">
+      <span><i></i>Median forecast</span><span><i class="band"></i>80% interval</span>
+      <span><i class="b"></i>Naive baseline (same hour yesterday)</span>
+    </div>
+  </div>
+
+  <h2>Live scoreboard</h2>
+  <div id="board"><p class="note">Loading…</p></div>
+
+  <h2>Backtest (rolling-origin, trained only on the past)</h2>
+  <div id="bt"><p class="note">Loading…</p></div>
+
+  <footer>
+    <ul>
+      <li><b>What “carbon intensity” means here:</b> a production-based estimate from Germany’s generation mix and fixed lifecycle emission factors. It ignores cross-border flows, so it differs from official figures and from other trackers.</li>
+      <li><b>Known limitation:</b> training uses observed/reanalysis weather while live forecasts use forecast weather, so backtest skill is likely optimistic. The live scoreboard is the honest number.</li>
+      <li>Forecast files are committed daily and never rewritten, so the track record is auditable in git history.</li>
+      <li>Not an official or safety-critical service. Data: Energy-Charts (Fraunhofer ISE), Open-Meteo.</li>
+    </ul>
+  </footer>
+</main>
+
+<script>
+const DEMO = new URLSearchParams(location.search).has('demo');
+const BASE = DEMO ? 'demo/' : 'data/';
+const TZ = 'Europe/Berlin';
+const fmtDT = new Intl.DateTimeFormat('en-GB', {timeZone: TZ, weekday: 'short', hour: '2-digit', minute: '2-digit'});
+const fmtH  = new Intl.DateTimeFormat('en-GB', {timeZone: TZ, hour: '2-digit', hour12: false});
+const fmtD  = new Intl.DateTimeFormat('en-GB', {timeZone: TZ, day: '2-digit', month: 'short'});
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const num = (v, d = 0) => v == null ? '–' : Number(v).toFixed(d);
+
+async function getJSON(name) {
+  try { const r = await fetch(BASE + name, {cache: 'no-store'}); return r.ok ? await r.json() : null; }
+  catch (e) { return null; }
+}
+
+function card(k, v, s, cls) {
+  const d = document.createElement('div'); d.className = 'card ' + (cls || '');
+  for (const [c, t] of [['k', k], ['v', v], ['s', s]]) { const e = document.createElement('div'); e.className = c; e.textContent = t; d.appendChild(e); }
+  return d;
+}
+
+function renderCards(fc) {
+  const box = $('cards'); box.replaceChildren();
+  box.appendChild(card('Last observed', num(fc.last_observed.ci) + ' g/kWh', fmtDT.format(new Date(fc.last_observed.time))));
+  const w = fc.cleanest_window;
+  box.appendChild(card('Cleanest 3 hours', fmtDT.format(new Date(w.start)) + ' – ' + fmtDT.format(new Date(w.end)).slice(-5),
+    'avg ' + num(w.mean) + ' g/kWh · best time to charge', 'good'));
+  const a = fc.alert;
+  if (a.active) box.appendChild(card('High-carbon period', a.hours + ' h', fmtDT.format(new Date(a.start)) + ' → ' + fmtDT.format(new Date(a.end)) + ' (median ≥ ' + num(a.threshold) + ')', 'alert'));
+  else box.appendChild(card('High-carbon period', 'None expected', 'no 6 h stretch above ' + num(a.threshold) + ' g/kWh'));
+  box.appendChild(card('Forecast issued', fmtDT.format(new Date(fc.issue_time)), 'model v' + fc.model_version));
+}
+
+function drawChart(fc) {
+  const cv = $('chart'), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = 320; cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const pad = {l: 50, r: 12, t: 12, b: 34};
+  const t = fc.times.map(s => new Date(s).getTime()), n = t.length;
+  const all = [].concat(fc.p10, fc.p50, fc.p90, fc.baseline).filter(v => v != null);
+  let lo = Math.min(...all), hi = Math.max(...all); const m = (hi - lo) * 0.08 || 10; lo = Math.max(0, lo - m); hi += m;
+  const x = i => pad.l + (W - pad.l - pad.r) * (i / (n - 1));
+  const y = v => pad.t + (H - pad.t - pad.b) * (1 - (v - lo) / (hi - lo));
+  const ink = css('--muted'), line = css('--line');
+  g.font = '12px system-ui, sans-serif'; g.fillStyle = ink; g.strokeStyle = line; g.lineWidth = 1;
+
+  for (let k = 0; k <= 4; k++) { const v = lo + (hi - lo) * k / 4, yy = y(v);
+    g.beginPath(); g.moveTo(pad.l, yy); g.lineTo(W - pad.r, yy); g.stroke();
+    g.textAlign = 'right'; g.fillText(Math.round(v), pad.l - 6, yy + 4); }
+  g.save(); g.translate(12, H / 2); g.rotate(-Math.PI / 2); g.textAlign = 'center'; g.fillText('gCO₂eq / kWh', 0, 0); g.restore();
+
+  const idxAt = iso => { const ms = new Date(iso).getTime(); let b = 0; t.forEach((v, i) => { if (Math.abs(v - ms) < Math.abs(t[b] - ms)) b = i; }); return b; };
+  const shade = (i0, i1, col) => { g.fillStyle = col; g.fillRect(x(i0) - 3, pad.t, x(i1) - x(i0) + 6, H - pad.t - pad.b); };
+  const cw = fc.cleanest_window; shade(idxAt(cw.start), Math.max(idxAt(cw.start), idxAt(cw.end) - 1), css('--good'));
+  if (fc.alert.active) shade(idxAt(fc.alert.start), Math.max(idxAt(fc.alert.start), idxAt(fc.alert.end) - 1), css('--warnbg'));
+
+  g.textAlign = 'center'; g.fillStyle = ink;
+  t.forEach((ms, i) => { const d = new Date(ms), hh = Number(fmtH.format(d));
+    if (hh % 6 === 0) { g.fillText(String(hh).padStart(2, '0') + 'h', x(i), H - 16); if (hh === 0) g.fillText(fmtD.format(d), x(i), H - 3); } });
+
+  const ok = (arr, i) => arr[i] != null;
+  g.fillStyle = css('--band'); g.beginPath();
+  for (let i = 0; i < n; i++) if (ok(fc.p90, i)) g.lineTo(x(i), y(fc.p90[i]));
+  for (let i = n - 1; i >= 0; i--) if (ok(fc.p10, i)) g.lineTo(x(i), y(fc.p10[i]));
+  g.closePath(); g.fill();
+
+  const path = (arr, col, w, dash) => { g.beginPath(); g.setLineDash(dash || []); g.strokeStyle = col; g.lineWidth = w; let pen = false;
+    for (let i = 0; i < n; i++) { if (!ok(arr, i)) { pen = false; continue; } pen ? g.lineTo(x(i), y(arr[i])) : g.moveTo(x(i), y(arr[i])); pen = true; }
+    g.stroke(); g.setLineDash([]); };
+  path(fc.baseline, css('--base'), 1.5, [5, 4]);
+  path(fc.p50, css('--accent'), 2.5);
+
+  cv.onmousemove = ev => { const r = cv.getBoundingClientRect(), px = ev.clientX - r.left;
+    const i = Math.max(0, Math.min(n - 1, Math.round((px - pad.l) / (W - pad.l - pad.r) * (n - 1))));
+    $('tip').textContent = fmtDT.format(new Date(t[i])) + ' · median ' + num(fc.p50[i]) + ' (80%: ' + num(fc.p10[i]) + '–' + num(fc.p90[i]) + ') · naive ' + num(fc.baseline[i]) + ' g/kWh'; };
+}
+
+function table(headers, rows) {
+  const wrap = document.createElement('div'); wrap.className = 'scroll';
+  const tb = document.createElement('table'), thead = tb.createTHead().insertRow();
+  headers.forEach(h => { const th = document.createElement('th'); th.textContent = h; thead.appendChild(th); });
+  const body = tb.createTBody();
+  rows.forEach(r => { const tr = body.insertRow(); r.forEach(c => { const td = tr.insertCell(); if (c && c.cls) { td.className = c.cls; td.textContent = c.t; } else td.textContent = c; }); });
+  wrap.appendChild(tb); return wrap;
+}
+
+function renderBoard(b) {
+  const box = $('board'); box.replaceChildren();
+  if (!b || !b.summary) { const p = document.createElement('p'); p.className = 'note'; p.textContent = 'No forecast has accumulated enough realized hours yet. Forecasts are scored as the real data arrives.'; box.appendChild(p); return; }
+  const s = b.summary, sk = s.skill * 100;
+  box.appendChild(table(['Forecasts scored', 'Hours scored', 'MAE model', 'MAE naive baseline', 'Skill vs baseline', '80% interval coverage'],
+    [[String(s.n_forecasts), String(s.n_points), num(s.mae_model, 1), num(s.mae_baseline, 1),
+      {t: (sk >= 0 ? '+' : '') + sk.toFixed(1) + '%', cls: sk >= 0 ? 'pos' : 'neg'}, (s.coverage_80 * 100).toFixed(0) + '% (target 80%)']]));
+  const rows = b.forecasts.slice(-10).reverse().map(f => [fmtD.format(new Date(f.issue_time)) + ' ' + fmtH.format(new Date(f.issue_time)) + 'h',
+    String(f.n), num(f.mae_model, 1), num(f.mae_baseline, 1), (f.coverage * 100).toFixed(0) + '%']);
+  const gap = document.createElement('div'); gap.style.height = '10px'; box.appendChild(gap);
+  box.appendChild(table(['Issued (Berlin)', 'Hours scored', 'MAE model', 'MAE baseline', 'Coverage'], rows));
+}
+
+function renderBT(bt) {
+  const box = $('bt'); box.replaceChildren();
+  if (!bt) { const p = document.createElement('p'); p.className = 'note'; p.textContent = 'Backtest not published yet.'; box.appendChild(p); return; }
+  const names = {model: 'This model (median)', persistence: 'Persistence (last value)', seasonal_naive_day: 'Same hour yesterday', seasonal_naive_week: 'Same hour last week'};
+  const rows = Object.entries(bt.models).map(([k, v]) => [names[k] || k, num(v.mae, 1), num(v.rmse, 1), (v.bias >= 0 ? '+' : '') + num(v.bias, 1)]);
+  box.appendChild(table(['Method', 'MAE (g/kWh)', 'RMSE', 'Bias'], rows));
+  const p = document.createElement('p'); p.className = 'note';
+  p.textContent = bt.n + ' forecast-hours · skill vs best baseline ' + (bt.skill_vs_best_baseline * 100).toFixed(1) + '% · 80% interval covered ' + (bt.coverage_80 * 100).toFixed(0) + '% of outcomes.';
+  box.appendChild(p);
+}
+
+(async () => {
+  const [fc, board, bt] = await Promise.all([getJSON('latest.json'), getJSON('scoreboard.json'), getJSON('backtest.json')]);
+  if (!fc) { $('cards').appendChild(card('No forecast yet', '–', 'Run the pipeline (see README) or open with ?demo')); return; }
+  if (fc.source === 'synthetic') { const b = $('banner'); b.hidden = false; b.textContent = 'DEMO: synthetic data. These numbers are not real and must not be quoted.'; }
+  renderCards(fc); drawChart(fc); renderBoard(board); renderBT(bt);
+  window.addEventListener('resize', () => drawChart(fc));
+})();
+</script>
+</body>
+</html>

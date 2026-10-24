@@ -1,0 +1,37 @@
+name: daily-forecast
+on:
+  schedule:
+    - cron: "20 5 * * *"      # 05:20 UTC every day
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: gridcast
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+      # The dataset is cached between runs (not committed: it would bloat the repo).
+      # On a cache miss the pipeline simply re-ingests ~2 years from the public APIs.
+      - uses: actions/cache@v4
+        with:
+          path: data
+          key: dataset-${{ github.run_id }}
+          restore-keys: dataset-
+      - run: python -m gridcast daily
+      - name: Weekly backtest (Sundays)
+        run: if [ "$(date -u +%u)" = "7" ]; then python -m gridcast backtest; fi
+      - name: Commit forecasts + scoreboard
+        run: |
+          git config user.name "gridcast-bot"
+          git config user.email "gridcast-bot@users.noreply.github.com"
+          git add docs/data
+          git diff --cached --quiet || git commit -m "forecast $(date -u +%F)"
+          git push
