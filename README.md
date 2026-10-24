@@ -36,16 +36,16 @@ target, but still under-covers.
 The backtest feeds the model the OBSERVED weather for the hour being predicted. In real use only a
 weather FORECAST is available, which has errors that grow with lead time. Two signs of this:
 error is almost flat across horizons (a real forecaster gets worse further out), and a
-preliminary ablation on an earlier data window (before calibration) gave:
+weather ablation (`experiments/ablation.py`, same 4 folds, calibrated model) gave:
 
 | Weather input | MAE | Skill vs best baseline |
 |---|---|---|
-| Observed (perfect) weather | 36.6 | +60.4% |
-| Noisy weather (independent noise) | 43.6 | +52.9% |
-| No weather features | 72.6 | +21.6% |
+| Observed (perfect) weather | 37.1 | +61.8% |
+| Noisy weather (independent noise) | 43.8 | +54.9% |
+| No weather features | 74.8 | +23.0% |
 
 The noisy case adds independent random noise, whereas real forecast errors are correlated, so it
-is optimistic. The honest range is roughly +22% (no weather) to +60% (perfect weather). The live
+is optimistic (the noise was also applied to the training data). The honest range is roughly +23% (no weather) to +62% (perfect weather). The live
 scoreboard is the number to trust.
 
 ## Live scoreboard
@@ -98,7 +98,7 @@ python -m http.server -d docs 8000
 
 ## Roadmap
 
-- [ ] Re-run the weather ablation with the calibrated model and publish it
+- [x] Weather ablation with the calibrated model (`experiments/ablation.py`)
 - [ ] Train on archived weather forecasts instead of observed weather
 - [ ] Improve interval calibration toward 80%
 - [ ] Compare against published day-ahead renewable forecasts
