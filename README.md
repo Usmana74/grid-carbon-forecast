@@ -10,33 +10,34 @@ Live since 2026-10-24.
 Carbon-intensity trackers already exist. The point of this project is evaluation rigour and an
 auditable track record, not a new idea.
 
-## Backtest results (rolling origin, as of 2026-10-24)
+## Backtest results (rolling origin, cloud run of 2026-10-25)
 
-4 folds of 14 days, trained only on data before each fold, 9,408 forecast-hours in total.
+4 folds of 14 days ending at the newest data, each trained only on data before the fold,
+9,408 forecast-hours. The folds move with the data, so these numbers shift by a point or two
+from day to day; the dashboard always shows the latest run.
 
 | Method | MAE (g/kWh) | RMSE | Bias |
 |---|---|---|---|
-| This model (median) | 37.1 | 47.4 | -15.5 |
-| Same hour yesterday | 97.2 | 125.0 | -5.0 |
-| Same hour last week | 119.1 | 150.2 | -4.9 |
-| Persistence (last value) | 126.8 | 161.8 | -5.7 |
+| This model (median) | 36.8 | 47.1 | -15.4 |
+| Same hour yesterday | 99.4 | 126.8 | -1.8 |
+| Same hour last week | 125.9 | 159.1 | -1.1 |
+| Persistence (last value) | 126.9 | 161.1 | -0.8 |
 
-Skill vs the best baseline: +61.8%. Treat this as an UPPER BOUND (see Limitations).
+Skill vs the best baseline: +63.0%. Treat this as an UPPER BOUND (see below).
 
-By horizon (MAE): 1-6 h 36.3 | 7-12 h 36.3 | 13-24 h 37.1 | 25-48 h 37.5
-(baseline "same hour yesterday": 84.2 | 84.1 | 86.1 | 109.2).
+By horizon (model MAE): 1-6h 35.9 | 7-12h 36.4 | 13-24h 36.3 | 25-48h 37.4
+(baseline "same hour yesterday", same buckets: 88.2 | 87.1 | 87.8 | 111.0).
 
-Per fold MAE: 38.0, 46.5, 32.8, 31.0. The second fold is the weakest.
+Per fold MAE: 41.4, 43.4, 31.9, 30.5.
 
-80% interval coverage: 74.5% after conformal calibration (67.6% before). Closer to the 80%
-target, but still under-covers.
+80% interval coverage: 72.5% after conformal calibration (about 68% before).
+Closer to the 80% target, but still under-covers.
 
-### Why the +61.8% is an upper bound
+### Why the headline skill is an upper bound
 
 The backtest feeds the model the OBSERVED weather for the hour being predicted. In real use only a
-weather FORECAST is available, which has errors that grow with lead time. Two signs of this:
-error is almost flat across horizons (a real forecaster gets worse further out), and a
-weather ablation (`experiments/ablation.py`, same 4 folds, calibrated model) gave:
+weather FORECAST is available, which has errors that grow with lead time. A weather ablation
+(`experiments/ablation.py`, local run on data up to 2026-10-24, calibrated model, same 4-fold design) gave:
 
 | Weather input | MAE | Skill vs best baseline |
 |---|---|---|
@@ -44,9 +45,9 @@ weather ablation (`experiments/ablation.py`, same 4 folds, calibrated model) gav
 | Noisy weather (independent noise) | 43.8 | +54.9% |
 | No weather features | 74.8 | +23.0% |
 
-The noisy case adds independent random noise, whereas real forecast errors are correlated, so it
-is optimistic (the noise was also applied to the training data). The honest range is roughly +23% (no weather) to +62% (perfect weather). The live
-scoreboard is the number to trust.
+The noisy case adds independent random noise, whereas real forecast errors are correlated, so it is
+optimistic (the noise was also applied to the training data). The honest range is roughly +23% (no
+weather) to about +62% (perfect weather). The live scoreboard is the number to trust.
 
 ## Live scoreboard
 
