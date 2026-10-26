@@ -1,1 +1,1 @@
-{"updated":"2026-10-25T09:50:08Z","source":"energy-charts+open-meteo","summary":null,"forecasts":[]}
+{"updated":"2026-10-26T11:08:50Z","source":"energy-charts+open-meteo","summary":{"n_forecasts":2,"n_points":68,"mae_model":10.68,"mae_baseline":27.9,"skill":0.6171,"coverage_80":0.9412},"forecasts":[{"issue_time":"2026-10-24T19:00:00Z","n":38,"mae_model":10.879560081856837,"mae_baseline":26.96974690197391,"coverage":0.9210526315789473},{"issue_time":"2026-10-25T03:00:00Z","n":30,"mae_model":10.43310874269297,"mae_baseline":29.07369238173059,"coverage":0.9666666666666667}]}
